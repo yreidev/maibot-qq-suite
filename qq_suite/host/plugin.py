@@ -332,7 +332,7 @@ class QQSuitePlugin(MaiBotPlugin):
         if action in {"看", "查看"}:
             portrait = self._album.reference()
             if portrait is None:
-                reply = "还没有定妆照。先让她拍一张满意的照片，再发 /定妆照"
+                reply = "还没有定妆照。先让机器人拍一张满意的照片，再发 /定妆照"
             else:
                 await self._send_image(base64.b64encode(portrait.data).decode("ascii"), stream_id)
                 reply = "这是现在的定妆照"
@@ -341,9 +341,9 @@ class QQSuitePlugin(MaiBotPlugin):
         elif action:
             reply = "用法：/定妆照（把上一张设为定妆照）、/定妆照 看、/定妆照 清除"
         elif self._album.set_reference_from_latest():
-            reply = "已把上一张照片设为定妆照，之后拍她自己都会照这个长相"
+            reply = "已把上一张照片设为定妆照，之后拍它自己都会照这个长相"
         else:
-            reply = "还没有拍过照片，先让她拍一张"
+            reply = "还没有拍过照片，先让机器人拍一张"
         await self.ctx.send.text(reply, stream_id)
         return True, None, True
 

@@ -242,7 +242,7 @@ class SearchSection(PluginConfigBase):
 
 
 class ImageSection(PluginConfigBase):
-    """拍照：生成照片发给对方（比如想看看她在干什么）。接口地址和 Key 在下方「图像接口」分节。"""
+    """拍照：生成照片发给对方（比如想看看机器人在干什么）。接口地址和 Key 在下方「图像接口」分节。"""
 
     __ui_label__ = "拍照"
     __ui_order__ = 45
