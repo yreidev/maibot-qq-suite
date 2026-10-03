@@ -54,8 +54,8 @@ async def test_reference_choice(tmp_path):
     assert r == {"success": True, "content": "已发送照片：在书房敲代码"}
     assert painter.calls[-1][1] == [] and sent == [(b"photo1", "S1")]
 
-    await studio.take("在厨房", "S1")  # 没有定妆照：拿上一张保持长相
-    assert painter.calls[-1][1] == [Picture(b"photo1", "image/jpeg")]
+    await studio.take("在厨房", "S1")  # 没有定妆照：不参考上一张，方便重拍挑长相
+    assert painter.calls[-1][1] == []
 
     album.set_reference_from_latest()  # 定妆照 = photo2
     await studio.take("在阳台", "S1")

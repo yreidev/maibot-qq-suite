@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "yreidev.qq_suite",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "name": "QQ 官方机器人全家桶",
   "description": "一个插件搞定：QQ 官方机器人私聊适配器、语音识别、语音合成（小米 MiMo）、联网搜索与读网页。",
   "author": {

@@ -118,5 +118,8 @@ def test_album(tmp_path):
     assert album.set_reference_from_latest() and album.reference() == Picture(b"png", "image/png")
     assert [p.name for p in tmp_path.glob("reference.*")] == ["reference.png"]  # 换定妆照不留旧的
     assert album.clear_reference() and album.reference() is None and not album.clear_reference()
+    assert album.recent_count() == 3
+    assert album.set_reference(3) and album.reference() == Picture(b"p2", "image/jpeg")  # 倒数第 3 张
+    assert not album.set_reference(4) and not album.set_reference(0)
     clock.now += 86400
     assert album.count_today() == 0

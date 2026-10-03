@@ -561,7 +561,12 @@ async def test_portrait_command(tmp_path):
     assert "还没有拍过照片" in texts[-1]
     plugin._album.save(Picture(b"photo", "image/jpeg"))
     await run()
-    assert "已把上一张照片设为定妆照" in texts[-1] and plugin._album.reference() == Picture(b"photo", "image/jpeg")
+    assert "已把最近一张照片设为定妆照" in texts[-1] and plugin._album.reference() == Picture(b"photo", "image/jpeg")
+    plugin._album.save(Picture(b"newer", "image/jpeg"))
+    await run("2")
+    assert "倒数第 2 张" in texts[-1] and plugin._album.reference() == Picture(b"photo", "image/jpeg")
+    await run("9")
+    assert texts[-1] == "只存了最近 2 张照片，没有倒数第 9 张"
     await run("看")
     assert images == [b"photo"]
     await run("清除")

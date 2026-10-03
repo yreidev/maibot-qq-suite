@@ -320,7 +320,7 @@ class QQSuitePlugin(MaiBotPlugin):
     # ---------------- 聊天命令 ----------------
     @Command(
         "qqsuite_portrait",
-        description="定妆照：/定妆照 把上一张照片设为定妆照；/定妆照 看 查看；/定妆照 清除 取消",
+        description="定妆照：/定妆照 把最近一张设为定妆照；/定妆照 2 选倒数第 2 张；/定妆照 看；/定妆照 清除",
         pattern=r"^/定妆照(?:\s+(?P<action>\S+))?\s*$",
     )
     async def qqsuite_portrait(
@@ -338,12 +338,17 @@ class QQSuitePlugin(MaiBotPlugin):
                 reply = "这是现在的定妆照"
         elif action in {"清除", "取消", "删除"}:
             reply = "已取消定妆照" if self._album.clear_reference() else "本来就没有定妆照"
-        elif action:
-            reply = "用法：/定妆照（把上一张设为定妆照）、/定妆照 看、/定妆照 清除"
-        elif self._album.set_reference_from_latest():
-            reply = "已把上一张照片设为定妆照，之后拍它自己都会照这个长相"
+        elif action and not action.isdigit():
+            reply = "用法：/定妆照（最近一张）、/定妆照 2（倒数第 2 张）、/定妆照 看、/定妆照 清除"
         else:
-            reply = "还没有拍过照片，先让机器人拍一张"
+            nth = int(action or 1)
+            if self._album.set_reference(nth):
+                which = "最近一张照片" if nth == 1 else f"倒数第 {nth} 张照片"
+                reply = f"已把{which}设为定妆照，之后拍它自己都会照这个长相"
+            elif self._album.recent_count() == 0:
+                reply = "还没有拍过照片，先让机器人拍一张"
+            else:
+                reply = f"只存了最近 {self._album.recent_count()} 张照片，没有倒数第 {nth} 张"
         await self.ctx.send.text(reply, stream_id)
         return True, None, True
 

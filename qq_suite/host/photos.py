@@ -1,7 +1,7 @@
 """拍照工具的具体逻辑：拼画面描述、挑参考图、生成、存档、发送。不依赖 MaiBot SDK，便于单测。
 
 参考图怎么挑：
-- 画「自己」：带上定妆照；还没有定妆照时带上一张照片，长相也能尽量一致
+- 画「自己」：带上定妆照，长相保持一致。还没有定妆照时不带参考图，每次都是新长相，方便挑一张设为定妆照
 - 「接着上一张」：再带上最近一张（在连贯时长以内），服装和场景前后连贯
 """
 
@@ -62,11 +62,9 @@ class PhotoStudio:
         previous = None
         if follow_previous and self.follow_seconds > 0:
             previous = self.album.latest(max_age=self.follow_seconds)
-        elif selfie and portrait is None:
-            previous = self.album.latest()  # 还没有定妆照：拿上一张保持长相
         if previous is not None:
             refs.append(previous)
-        return refs, portrait is not None, previous is not None and follow_previous
+        return refs, portrait is not None, previous is not None
 
     async def take(
         self, scene: str, stream_id: str, *, selfie: bool = True, follow_previous: bool = False

@@ -78,14 +78,23 @@ class PhotoAlbum:
         path = self._reference_path()
         return self._load(path) if path else None
 
-    def set_reference_from_latest(self) -> bool:
-        """把最近一张照片设为定妆照；还没有照片时返回 False。"""
-        latest = self.latest()
-        if latest is None:
+    def recent_count(self) -> int:
+        return len(self._photos())
+
+    def set_reference(self, nth: int = 1) -> bool:
+        """把倒数第 nth 张照片（1 = 最近一张）设为定妆照；没有这张时返回 False。"""
+        photos = self._photos()
+        if nth < 1 or nth > len(photos):
+            return False
+        picture = self._load(photos[-nth])
+        if picture is None:
             return False
         self.clear_reference()
-        (self._dir / f"{_REFERENCE}{latest.suffix}").write_bytes(latest.data)
+        (self._dir / f"{_REFERENCE}{picture.suffix}").write_bytes(picture.data)
         return True
+
+    def set_reference_from_latest(self) -> bool:
+        return self.set_reference(1)
 
     def clear_reference(self) -> bool:
         path = self._reference_path()
