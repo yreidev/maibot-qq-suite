@@ -28,7 +28,6 @@
   "capabilities": [
     "send.custom",
     "send.image",
-    "send.text",
     "component.enable",
     "component.disable"
   ],

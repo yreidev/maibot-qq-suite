@@ -58,6 +58,8 @@ def _attachments(raw: Any) -> tuple[Attachment, ...]:
 
 # message_type：0 文本 / 3 ARK 卡片 / 101 并行消息 / 102 聊天记录 / 103 引用消息（被引用的内容在 msg_elements）
 MESSAGE_TYPE_QUOTE = 103
+# 被引用消息的编号：message_scene.ext 里的 "ref_msg_idx=REFIDX_…"，和机器人发消息时返回的 ext_info.ref_idx 是同一个值。
+# 官方文档里没找到这段说明，依据是多个开源实现（cohub、nekro-agent 的 QQ 适配器）的做法，未确认
 _MAX_ELEMENTS = 5
 
 
@@ -67,6 +69,18 @@ class MessageElement:
 
     content: str
     attachments: tuple[Attachment, ...] = ()
+    msg_idx: str = ""
+
+
+def _scene_ext(raw: Any) -> dict[str, str]:
+    """message_scene.ext 是 ["k=v", ...] 形式的列表。"""
+    ext = raw.get("ext") if isinstance(raw, dict) else None
+    result: dict[str, str] = {}
+    for item in ext if isinstance(ext, list) else ():
+        key, sep, value = str(item).partition("=")
+        if sep and key.strip():
+            result[key.strip()] = value.strip()
+    return result
 
 
 def _elements(raw: Any, depth: int = 0) -> list[MessageElement]:
@@ -77,7 +91,13 @@ def _elements(raw: Any, depth: int = 0) -> list[MessageElement]:
     for item in raw:
         if not isinstance(item, dict):
             continue
-        result.append(MessageElement(str(item.get("content") or "").strip(), _attachments(item.get("attachments"))))
+        result.append(
+            MessageElement(
+                str(item.get("content") or "").strip(),
+                _attachments(item.get("attachments")),
+                str(item.get("msg_idx") or ""),
+            )
+        )
         result.extend(_elements(item.get("msg_elements"), depth + 1))
     return result[:_MAX_ELEMENTS]
 
@@ -91,6 +111,7 @@ class C2CMessage:
     attachments: tuple[Attachment, ...] = field(default_factory=tuple)
     message_type: int = 0
     elements: tuple[MessageElement, ...] = field(default_factory=tuple)
+    quoted_ref: str = ""  # 被引用消息的编号，没引用时为空
 
     @staticmethod
     def from_payload(d: dict[str, Any]) -> C2CMessage:
@@ -100,6 +121,10 @@ class C2CMessage:
             message_type = int(d.get("message_type") or 0)
         except (TypeError, ValueError):
             message_type = 0
+        elements = tuple(_elements(d.get("msg_elements")))
+        quoted_ref = _scene_ext(d.get("message_scene")).get("ref_msg_idx", "")
+        if not quoted_ref and message_type == MESSAGE_TYPE_QUOTE and elements:
+            quoted_ref = elements[0].msg_idx
         return C2CMessage(
             id=str(d.get("id") or ""),
             user_openid=openid,
@@ -107,5 +132,6 @@ class C2CMessage:
             timestamp=str(d.get("timestamp") or ""),
             attachments=_attachments(d.get("attachments")),
             message_type=message_type,
-            elements=tuple(_elements(d.get("msg_elements"))),
+            elements=elements,
+            quoted_ref=quoted_ref,
         )

@@ -114,8 +114,9 @@ class FakeSender:
     async def send_text(self, openid: str, text: str) -> None:
         self.calls.append(("text", openid, text))
 
-    async def send_media(self, openid: str, file_type: FileType, data: bytes) -> None:
+    async def send_media(self, openid: str, file_type: FileType, data: bytes) -> str:
         self.calls.append(("media", openid, file_type, data))
+        return f"REFIDX_{len(self.calls)}"
 
 
 def _out(segments, target="U1", **extra):
@@ -283,7 +284,7 @@ def test_plugin_loads_like_host():
     finally:
         sys.modules.pop(spec.name, None)
     tools = ("qqsuite_web_search", "qqsuite_read_url", "qqsuite_send_voice", "qqsuite_send_photo")
-    assert set(names) == {"qqsuite_c2c", "qqsuite_portrait", *tools}
+    assert set(names) == {"qqsuite_c2c", *tools}
     for tool in tools:
         assert names[tool]["metadata"]["visibility"] == "visible"
     assert plugin.get_default_config()["plugin"]["config_version"]
@@ -460,7 +461,6 @@ def test_manifest_host_range_and_capabilities():
         "component.enable",
         "send.custom",
         "send.image",
-        "send.text",
     ]
 
 
@@ -531,48 +531,10 @@ def test_image_settings_from_config(monkeypatch):
     )
 
 
-async def test_portrait_command(tmp_path):
-    from maibot_sdk.context import PluginContext
-
-    from qq_suite.host.plugin import QQSuitePlugin
-    from qq_suite.image import PhotoAlbum, Picture
-
-    plugin = QQSuitePlugin()
-    plugin._set_context(PluginContext("yreidev.qq_suite"))
-    plugin._album = PhotoAlbum(tmp_path)
-    plugin._allowed = {"U1"}
-    texts, images = [], []
-
-    async def text(message, stream_id, **kwargs):
-        texts.append(message)
-        return True
-
-    async def image(data, stream_id, **kwargs):
-        images.append(base64.b64decode(data))
-        return True
-
-    plugin.ctx.send.text = text
-    plugin.ctx.send.image = image
-
-    async def run(action=None, user="U1"):
-        return await plugin.qqsuite_portrait(stream_id="S1", user_id=user, matched_groups={"action": action})
-
-    assert await run() == (True, None, True)
-    assert "还没有拍过照片" in texts[-1]
-    plugin._album.save(Picture(b"photo", "image/jpeg"))
-    await run()
-    assert "已把最近一张照片设为定妆照" in texts[-1] and plugin._album.reference() == Picture(b"photo", "image/jpeg")
-    plugin._album.save(Picture(b"newer", "image/jpeg"))
-    await run("2")
-    assert "倒数第 2 张" in texts[-1] and plugin._album.reference() == Picture(b"photo", "image/jpeg")
-    await run("9")
-    assert texts[-1] == "只存了最近 2 张照片，没有倒数第 9 张"
-    await run("看")
-    assert images == [b"photo"]
-    await run("清除")
-    assert texts[-1] == "已取消定妆照" and plugin._album.reference() is None
-    await run("乱写")
-    assert texts[-1].startswith("用法")
-    count = len(texts)
-    await run(user="stranger")  # 白名单外：不理
-    assert len(texts) == count
+async def test_outbound_reports_media_ref_idx():
+    seen = []
+    sender = FakeSender()
+    b64 = base64.b64encode(b"IMG").decode()
+    d = OutboundDispatcher(sender, on_media_sent=lambda ft, data, ref: seen.append((ft, data, ref)))
+    await d.dispatch(_out([{"type": "text", "data": "看"}, {"type": "image", "data": "", "binary_data_base64": b64}]))
+    assert seen == [(FileType.IMAGE, b"IMG", "REFIDX_2")]  # 文字不报，图片报出 QQ 给的引用编号

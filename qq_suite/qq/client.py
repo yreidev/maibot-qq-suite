@@ -158,13 +158,16 @@ class QQBotClient:
             retry = self._target(openid, "文字")
             await self.api.send_text(openid, strip_markdown(chunk), msg_id=retry.msg_id, msg_seq=retry.msg_seq)
 
-    async def send_media(self, openid: str, file_type: FileType, data: bytes) -> None:
+    async def send_media(self, openid: str, file_type: FileType, data: bytes) -> str:
+        """发图片 / 语音等，返回这条消息的引用编号（ext_info.ref_idx，用户引用它时会带上；拿不到时为空）。"""
         kind = {FileType.IMAGE: "图片", FileType.VOICE: "语音", FileType.VIDEO: "视频"}.get(file_type, "文件")
         started = asyncio.get_running_loop().time()
         file_info = await self.api.upload_media(openid, file_type, data)
         uploaded = asyncio.get_running_loop().time()
         target = self._target(openid, kind)
-        await self.api.send_media(openid, file_info, msg_id=target.msg_id, msg_seq=target.msg_seq)
+        resp = await self.api.send_media(openid, file_info, msg_id=target.msg_id, msg_seq=target.msg_seq)
+        ext = resp.get("ext_info") if isinstance(resp, dict) else None
+        ref_idx = str(ext.get("ref_idx") or "") if isinstance(ext, dict) else ""
         self._log.info(
             "发%s给 %s：%d KB，上传 %.1f 秒，发送 %.1f 秒，msg_seq=%d",
             kind,
@@ -174,6 +177,7 @@ class QQBotClient:
             asyncio.get_running_loop().time() - uploaded,
             target.msg_seq,
         )
+        return ref_idx
 
     async def notify_typing(self, openid: str) -> None:
         """显示「正在输入」（实验功能，默认关闭）。占用一次被动回复名额；没有名额或失败时什么都不做。"""

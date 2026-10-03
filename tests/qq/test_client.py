@@ -25,7 +25,7 @@ async def _client(fake_service, *, reject: set[int] = frozenset(), **settings):
         sent.append(body)
         if body["msg_type"] in reject:
             return web.json_response({"code": 304003, "message": "没有权限"}, status=400)
-        return web.json_response({"id": "ROBOT1.0_x"})
+        return web.json_response({"id": "ROBOT1.0_x", "ext_info": {"ref_idx": "REFIDX_sent"}})
 
     routes = {
         ("POST", "/app/getAppAccessToken"): token,
@@ -115,6 +115,6 @@ async def test_send_media_logs_upload_time(fake_service, caplog):
     client, sent, _ = await _client(fake_service)
     await client.on_dispatch("C2C_MESSAGE_CREATE", _inbound("M1"), "")
     with caplog.at_level(logging.INFO):
-        await client.send_media("U", FileType.VOICE, b"x" * 4096)
+        assert await client.send_media("U", FileType.VOICE, b"x" * 4096) == "REFIDX_sent"
     assert sent == [{"upload": 3}, {"msg_type": 7, "media": {"file_info": "FI"}, "msg_seq": 1, "msg_id": "M1"}]
     assert "发语音给" in caplog.text and "4 KB" in caplog.text

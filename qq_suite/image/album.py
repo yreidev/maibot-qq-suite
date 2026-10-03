@@ -3,10 +3,13 @@
 目录结构（放在插件数据目录里，更新插件不会被覆盖）：
   reference.jpg / .png / .webp   定妆照：画机器人自己时总带上它，长相就能保持一致
   history/<时间>.jpg              最近生成的照片，只留最近 keep 张
+  sent.json                      照片发到 QQ 后的引用编号 → 文件名；用户引用某张照片时据此认出是哪张
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -40,7 +43,10 @@ class PhotoAlbum:
         self._history.mkdir(parents=True, exist_ok=True)
         now = self._clock()
         stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{int(now * 1000) % 1000:03d}"
-        path = self._history / f"{stamp}{picture.suffix}"
+        # 同一毫秒内连拍（机器很快时常见）：在这一刻已有的最大序号上加一。不能找最小的空号——旧照片被清掉后
+        # 空出来的小号会让新照片排到最前面。序号定宽，文件名排序就是拍摄顺序
+        taken = [int(p.stem[len(stamp) + 1 :]) for p in self._photos() if p.stem.startswith(stamp + "-")]
+        path = self._history / f"{stamp}-{max(taken, default=-1) + 1:03d}{picture.suffix}"
         path.write_bytes(picture.data)
         for old in self._photos()[: -self._keep]:
             old.unlink(missing_ok=True)
@@ -95,6 +101,39 @@ class PhotoAlbum:
 
     def set_reference_from_latest(self) -> bool:
         return self.set_reference(1)
+
+    # ---- 引用编号 ----
+    def _sent_index(self) -> dict[str, str]:
+        try:
+            data = json.loads((self._dir / "sent.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
+
+    def remember_sent(self, data: bytes, ref_idx: str) -> bool:
+        """照片发到 QQ 后记下它的引用编号；data 不是存档里的照片（比如表情包）就不记。"""
+        digest = hashlib.sha256(data).hexdigest()
+        photos = self._photos()
+        match = next((p for p in reversed(photos) if hashlib.sha256(p.read_bytes()).hexdigest() == digest), None)
+        if match is None or not ref_idx:
+            return False
+        names = {p.name for p in photos}
+        index = {k: v for k, v in self._sent_index().items() if v in names}  # 照片删了，编号也跟着删
+        index[ref_idx] = match.name
+        self._dir.mkdir(parents=True, exist_ok=True)
+        (self._dir / "sent.json").write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+        return True
+
+    def set_reference_by_ref(self, ref_idx: str) -> bool:
+        """把引用编号对应的那张照片设为定妆照；认不出（不是拍的照片或已经太旧被清掉）时返回 False。"""
+        name = self._sent_index().get(ref_idx) if ref_idx else None
+        if not name:
+            return False
+        photos = self._photos()
+        for nth, path in enumerate(reversed(photos), 1):
+            if path.name == name:
+                return self.set_reference(nth)
+        return False
 
     def clear_reference(self) -> bool:
         path = self._reference_path()

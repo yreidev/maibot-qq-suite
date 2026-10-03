@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import contextlib
 from pathlib import Path
 from typing import Any
 
 import aiohttp
-from maibot_sdk import Command, MaiBotPlugin, MessageGateway, Tool
+from maibot_sdk import MaiBotPlugin, MessageGateway, Tool
 from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
 from ..image import PhotoAlbum
-from ..qq import C2CMessage, QQBotClient
+from ..qq import C2CMessage, FileType, QQBotClient
 from ..search import make_reader_session
 from .assembly import Modules, assemble
 from .bridge import PLATFORM, InboundBuilder, OutboundDispatcher
 from .config import QQSuiteConfig, parse_nicknames
 from .photos import PhotoStudio
+from .portrait import handle_portrait, is_portrait_command
 from .tools import ToolBox
 
 GATEWAY = "qqsuite_c2c"
@@ -118,7 +118,9 @@ class QQSuitePlugin(MaiBotPlugin):
                     nickname_of=lambda openid: nicknames.get(openid) or f"QQ用户{openid[:6]}",
                     logger=log,
                 )
-                self._dispatcher = OutboundDispatcher(self._qq, is_allowed=self._is_allowed)
+                self._dispatcher = OutboundDispatcher(
+                    self._qq, is_allowed=self._is_allowed, on_media_sent=self._on_media_sent
+                )
                 self._qq.start()  # 后台连接，不阻塞 on_load
             enabled = [
                 name
@@ -187,6 +189,9 @@ class QQSuitePlugin(MaiBotPlugin):
             return
         if self._builder is None or self._qq is None:
             return
+        if is_portrait_command(message):
+            await self._handle_portrait(message)  # 命令由插件自己处理，不交给 MaiBot
+            return
         await self._qq.notify_typing(message.user_openid)
         bot_id = self._qq.bot_id
         payload = await self._builder.build(message, bot_id)
@@ -197,6 +202,21 @@ class QQSuitePlugin(MaiBotPlugin):
             external_message_id=message.id,
             dedupe_key=message.id,
         )
+
+    async def _handle_portrait(self, message: C2CMessage) -> None:
+        qq, album, openid = self._qq, self._album, message.user_openid
+        if qq is None or album is None:
+            return
+        await handle_portrait(
+            message,
+            album,
+            reply=lambda text: qq.send_text(openid, text),
+            send_photo=lambda data: qq.send_media(openid, FileType.IMAGE, data),
+        )
+
+    def _on_media_sent(self, file_type: FileType, data: bytes, ref_idx: str) -> None:
+        if file_type == FileType.IMAGE and self._album is not None and self._album.remember_sent(data, ref_idx):
+            self.ctx.logger.debug("记下照片的引用编号 %s", ref_idx)
 
     # ---------------- MaiBot → QQ ----------------
     @MessageGateway(
@@ -316,41 +336,6 @@ class QQSuitePlugin(MaiBotPlugin):
         return await self._photos.take(
             scene, stream_id, selfie=_as_bool(selfie, True), follow_previous=_as_bool(follow_previous, False)
         )
-
-    # ---------------- 聊天命令 ----------------
-    @Command(
-        "qqsuite_portrait",
-        description="定妆照：/定妆照 把最近一张设为定妆照；/定妆照 2 选倒数第 2 张；/定妆照 看；/定妆照 清除",
-        pattern=r"^/定妆照(?:\s+(?P<action>\S+))?\s*$",
-    )
-    async def qqsuite_portrait(
-        self, stream_id: str = "", user_id: str = "", matched_groups: dict | None = None, **kwargs: Any
-    ):
-        if not self._is_allowed(user_id) or self._album is None:
-            return True, None, True
-        action = str((matched_groups or {}).get("action") or "").strip()
-        if action in {"看", "查看"}:
-            portrait = self._album.reference()
-            if portrait is None:
-                reply = "还没有定妆照。先让机器人拍一张满意的照片，再发 /定妆照"
-            else:
-                await self._send_image(base64.b64encode(portrait.data).decode("ascii"), stream_id)
-                reply = "这是现在的定妆照"
-        elif action in {"清除", "取消", "删除"}:
-            reply = "已取消定妆照" if self._album.clear_reference() else "本来就没有定妆照"
-        elif action and not action.isdigit():
-            reply = "用法：/定妆照（最近一张）、/定妆照 2（倒数第 2 张）、/定妆照 看、/定妆照 清除"
-        else:
-            nth = int(action or 1)
-            if self._album.set_reference(nth):
-                which = "最近一张照片" if nth == 1 else f"倒数第 {nth} 张照片"
-                reply = f"已把{which}设为定妆照，之后拍它自己都会照这个长相"
-            elif self._album.recent_count() == 0:
-                reply = "还没有拍过照片，先让机器人拍一张"
-            else:
-                reply = f"只存了最近 {self._album.recent_count()} 张照片，没有倒数第 {nth} 张"
-        await self.ctx.send.text(reply, stream_id)
-        return True, None, True
 
 
 def _as_bool(value: Any, default: bool) -> bool:

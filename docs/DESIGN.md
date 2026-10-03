@@ -47,7 +47,12 @@ qq_suite/
 
 **拍照**：planner 调 `qqsuite_send_photo` → `PhotoStudio` 挑参考图（画自己带定妆照，没有定妆照时带上一张；
 「接着上一张」再带最近一张）→ 有参考图走 `/images/edits`，没有走 `/images/generations` → 存进照片存档
-→ `ctx.send.image(..., sync_to_maisaka_history=True)` → 宿主回调本插件网关上传到 QQ。`/定妆照` 命令把最近一张设为定妆照。
+→ `ctx.send.image(..., sync_to_maisaka_history=True)` → 宿主回调本插件网关上传到 QQ。
+
+**定妆照**：照片发到 QQ 后，QQ 返回这条消息的引用编号 `ext_info.ref_idx`，按图片内容的哈希对上存档里的照片，记进
+`photos/sent.json`。用户引用照片发 `/定妆照` 时，入站消息 `message_scene.ext` 里的 `ref_msg_idx`（或 `msg_elements[].msg_idx`）
+就是这个编号，据此找到原图设为定妆照；只认存档里的照片，别人发的图设不成定妆照。`/定妆照` 由插件在 `_on_qq_message`
+里直接处理、回复，不交给 MaiBot：MaiBot 的命令拿不到被引用消息的编号，而且引用消息前面加了「[引用：…]」也匹配不上命令。
 
 **被动回复名额**（`qq/replies.py`）：每条用户消息 60 分钟内可回复 4 次。用户最近一小时的每条消息各自的名额合在一起用，
 先用最新的；切分后条数超过剩余名额时，放宽到单条 4000 字重新切，尽量少占名额；全部用完才改发主动消息并告警。
@@ -83,6 +88,7 @@ qq_suite/
 - 引用消息的 `msg_elements` 实际内容（文档只写了字段，没给完整示例）。
 - 「正在输入」（msg_type 6）是否可用、是否计入被动回复次数。
 - 单条文字 / Markdown 的长度上限（文档未写明，暂按 4000 字）。
+- 发消息返回的 `ext_info.ref_idx` 与引用消息里的 `ref_msg_idx` 是否一致（官方文档没写，依据开源实现）。
 
 ## 参考
 - QQ 机器人开放平台文档：https://bot.q.qq.com/wiki/develop/api-v2/

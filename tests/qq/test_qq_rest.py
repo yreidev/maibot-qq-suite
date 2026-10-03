@@ -218,3 +218,13 @@ async def test_api_input_notify(fake_service):
 )
 def test_trusted_media_url(url, ok):
     assert is_trusted_media_url(url) is ok
+
+
+def test_quoted_ref_from_message_scene_or_elements():
+    scene = {"id": "M", "author": {"user_openid": "U"}, "content": "/定妆照", "message_type": 103,
+             "message_scene": {"source": "default", "ext": ["ref_msg_idx=REFIDX_abc", "msg_idx=REFIDX_self", "bad"]},
+             "msg_elements": [{"msg_idx": "REFIDX_other", "attachments": []}]}  # fmt: skip
+    assert C2CMessage.from_payload(scene).quoted_ref == "REFIDX_abc"
+    only_elements = {**scene, "message_scene": {}}
+    assert C2CMessage.from_payload(only_elements).quoted_ref == "REFIDX_other"
+    assert C2CMessage.from_payload({"id": "M", "content": "hi"}).quoted_ref == ""

@@ -133,7 +133,10 @@ class InboundBuilder:
 
 class QQSender(Protocol):
     async def send_text(self, openid: str, text: str) -> None: ...
-    async def send_media(self, openid: str, file_type: FileType, data: bytes) -> None: ...
+    async def send_media(self, openid: str, file_type: FileType, data: bytes) -> str | None: ...
+
+
+MediaSentHook = Callable[[FileType, bytes, str], None]  # (类型, 内容, QQ 给的引用编号)
 
 
 @dataclass
@@ -142,6 +145,7 @@ class OutboundDispatcher:
 
     sender: QQSender
     is_allowed: Callable[[str], bool] = lambda openid: True
+    on_media_sent: MediaSentHook | None = None  # 例如记下照片的引用编号，之后用户引用它时能认出是哪张
 
     async def dispatch(self, message: dict[str, Any]) -> dict[str, Any]:
         info = message.get("message_info") or {}
@@ -155,14 +159,19 @@ class OutboundDispatcher:
             return {"success": False, "error": "目标用户不在白名单内"}
         sent = 0
         for action in _plan(message.get("raw_message") or []):
-            await action(self.sender, openid)
+            ref_idx = await action.send(self.sender, openid)
+            if action.media is not None and ref_idx and self.on_media_sent is not None:
+                self.on_media_sent(action.media[0], action.media[1], ref_idx)
             sent += 1
         if sent == 0:
             return {"success": False, "error": "没有可发送的内容"}
         return {"success": True}
 
 
-SendAction = Callable[[QQSender, str], Awaitable[None]]
+@dataclass(frozen=True)
+class SendAction:
+    send: Callable[[QQSender, str], Awaitable[Any]]
+    media: tuple[FileType, bytes] | None = None
 
 
 def _plan(segments: Iterable[Any]) -> list[SendAction]:
@@ -174,7 +183,7 @@ def _plan(segments: Iterable[Any]) -> list[SendAction]:
         text = "".join(buffer).strip()
         buffer.clear()
         if text:
-            actions.append(lambda sender, openid, text=text: sender.send_text(openid, text))
+            actions.append(SendAction(lambda sender, openid, text=text: sender.send_text(openid, text)))
 
     for seg in segments:
         if not isinstance(seg, dict):
@@ -186,7 +195,11 @@ def _plan(segments: Iterable[Any]) -> list[SendAction]:
             flush()
             data = base64.b64decode(seg["binary_data_base64"])
             file_type = FileType.VOICE if seg_type == "voice" else FileType.IMAGE
-            actions.append(lambda sender, openid, ft=file_type, d=data: sender.send_media(openid, ft, d))
+            actions.append(
+                SendAction(
+                    lambda sender, openid, ft=file_type, d=data: sender.send_media(openid, ft, d), (file_type, data)
+                )
+            )
         elif seg_type == "at":
             continue  # 私聊里 @ 没有意义
         elif seg_type == "reply":

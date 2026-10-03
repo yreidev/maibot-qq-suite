@@ -123,3 +123,15 @@ def test_album(tmp_path):
     assert not album.set_reference(4) and not album.set_reference(0)
     clock.now += 86400
     assert album.count_today() == 0
+
+
+def test_album_burst_in_same_instant(tmp_path):
+    """CI 机器很快时，几张照片会落在同一毫秒：不能互相覆盖，先后顺序也要对。"""
+    album = PhotoAlbum(tmp_path, keep=5, clock=lambda: 1_791_000_000.0)
+    for i in range(12):
+        album.save(Picture(f"p{i}".encode(), "image/jpeg"))
+    names = sorted(p.name for p in (tmp_path / "history").iterdir())
+    assert len(names) == 5 and len(set(names)) == 5
+    assert album.latest() == Picture(b"p11", "image/jpeg")
+    assert album.set_reference(5) and album.reference() == Picture(b"p7", "image/jpeg")
+    assert album.count_today() == 5
