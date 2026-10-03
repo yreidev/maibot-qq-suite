@@ -15,16 +15,18 @@ qq_suite/
     config.py                 配置模型（= config.toml 结构 = WebUI 配置页）
     assembly.py               按配置组装各模块；一个模块出错只关掉它自己
     bridge.py                 QQ 消息 ⇄ MaiBot 消息字典（不依赖 SDK，可单测）
-    tools.py                  三个工具的逻辑（不依赖 SDK，可单测）
+    tools.py                  搜索、读网页、语音工具的逻辑（不依赖 SDK，可单测）
+    photos.py                 拍照工具的逻辑：拼提示词、挑参考图、存档、发送
   qq/                         QQ 官方机器人单聊客户端，只依据腾讯官方文档实现
     auth.py  api.py  gateway.py  events.py  replies.py  text.py  media.py  client.py
   speech/asr/                 语音识别：统一接口 + 硅基流动 / MiMo / 通用 OpenAI 兼容
   speech/tts/                 语音合成：统一接口 + MiMo（预置 / 音色设计 / 音色复刻）
   search/                     搜索：统一接口 + SearXNG / Tavily / 博查；网页读取（防 SSRF）
+  image/                      画图：统一接口 + OpenAI 兼容的 gpt-image 系列；照片存档（定妆照、上一张）
   common/                     错误类型、HTTP 小工具
 ```
 
-依赖方向只能向下：`host → qq / speech / search → common`。`qq`、`speech`、`search` 之间互不引用，
+依赖方向只能向下：`host → qq / speech / search / image → common`。`qq`、`speech`、`search`、`image` 之间互不引用，
 也不知道 MaiBot 的存在，可以单独拿去别的项目用。
 
 ### 解耦手段
@@ -42,6 +44,10 @@ qq_suite/
 
 **出站**：宿主调用网关 `qqsuite_c2c` → `OutboundDispatcher` 合并相邻文字、图片和语音逐条发送
 → `QQBotClient`：普通文字模式下去掉 Markdown 符号；超过单条字数就按段落切分；取被动回复目标 → OpenAPI。
+
+**拍照**：planner 调 `qqsuite_send_photo` → `PhotoStudio` 挑参考图（画自己带定妆照，没有定妆照时带上一张；
+「接着上一张」再带最近一张）→ 有参考图走 `/images/edits`，没有走 `/images/generations` → 存进照片存档
+→ `ctx.send.image(..., sync_to_maisaka_history=True)` → 宿主回调本插件网关上传到 QQ。`/定妆照` 命令把最近一张设为定妆照。
 
 **被动回复名额**（`qq/replies.py`）：每条用户消息 60 分钟内可回复 4 次。用户最近一小时的每条消息各自的名额合在一起用，
 先用最新的；切分后条数超过剩余名额时，放宽到单条 4000 字重新切，尽量少占名额；全部用完才改发主动消息并告警。
@@ -65,6 +71,8 @@ qq_suite/
 | 默认去掉 Markdown 符号，Markdown 消息可选 | 模型常写 `**`、`#`，普通文字消息会原样显示；Markdown 发送失败时本次运行自动改回普通文字 |
 | 搜索结果紧凑排版、读网页优先取 `<main>/<article>` | 工具结果会留在后续对话上下文里，越短越省 token、越快 |
 | 语音默认 MP3，失败自动改 WAV 重发 | 实测 WAV（24kHz 16bit）约 48KB/秒，海外服务器上传到 QQ 一段 25 秒的语音要 28 秒；MP3 约为 1/6。QQ 文档只写了 silk，WAV 实测可用，MP3 待实测，所以留了自动回退 |
+| 画图按 OpenAI Images API 的能力调用、地址可填 | 第三方中转普遍兼容官方接口；参考图用 `/images/edits` 的 image[]（最多 16 张），2.5 系列加 input_fidelity=high |
+| 人物长相靠定妆照、连贯靠上一张 | 只靠文字描述，每张脸都不一样；参考图能稳定长相，接着上一张拍能保持服装和场景 |
 | 复刻录音放插件数据目录 | `data/plugins/<id>/` 不随插件更新被覆盖；仍兼容旧版放在插件目录 `voices/` 的录音 |
 | `host_application.max_version` 锁 1.3.99 | 依赖宿主内部行为（入站字典形状、出站目标字段等），新小版本先实测再放宽 |
 

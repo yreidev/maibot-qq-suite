@@ -15,6 +15,7 @@ from typing import TypeVar
 import aiohttp
 
 from ..common.errors import ConfigError
+from ..image import ImageGenerator, ImageSettings, build_image
 from ..qq import QQSettings
 from ..qq.text import QQ_TEXT_LIMIT
 from ..search import PageReader, SearchProvider, SearchSettings, build_search
@@ -23,6 +24,8 @@ from ..speech.asr import ASRProvider, ASRSettings, build_asr
 from ..speech.tts import TTSProvider, TTSSettings, build_tts
 from .config import (
     ASR_PROVIDERS,
+    IMAGE_QUALITIES,
+    IMAGE_SIZES,
     MIMO_ASR_LANGUAGES,
     SEARCH_PROVIDERS,
     SEARXNG_LANGUAGES,
@@ -46,6 +49,7 @@ class Modules:
     tts_fallback: TTSProvider | None = None  # 主格式（MP3）发不出去时改用的 WAV
     search: SearchProvider | None = None
     reader: PageReader | None = None
+    image: ImageGenerator | None = None
     problems: list[str] = field(default_factory=list)
 
 
@@ -110,6 +114,20 @@ def search_settings(cfg: QQSuiteConfig) -> SearchSettings:
     return SearchSettings(provider, "", resolve_secret(key))
 
 
+def image_settings(cfg: QQSuiteConfig) -> ImageSettings:
+    if not cfg.image.enabled:
+        return ImageSettings("none")
+    i = cfg.image
+    return ImageSettings(
+        "openai",
+        cfg.image_api.base_url.strip(),
+        resolve_secret(cfg.image_api.api_key),
+        i.model,
+        IMAGE_SIZES[i.size],
+        IMAGE_QUALITIES[i.quality],
+    )
+
+
 def assemble(
     config: QQSuiteConfig,
     *,
@@ -150,4 +168,5 @@ def assemble(
     modules.search = guarded("联网搜索", lambda: build_search(search_settings(config), session))
     if config.search.reader_enabled:
         modules.reader = PageReader(reader_session)
+    modules.image = guarded("拍照", lambda: build_image(image_settings(config), session))
     return modules

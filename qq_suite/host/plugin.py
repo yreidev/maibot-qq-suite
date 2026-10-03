@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 from pathlib import Path
 from typing import Any
 
 import aiohttp
-from maibot_sdk import MaiBotPlugin, MessageGateway, Tool
-from maibot_sdk.types import ToolParameterInfo
+from maibot_sdk import Command, MaiBotPlugin, MessageGateway, Tool
+from maibot_sdk.types import ToolParameterInfo, ToolParamType
 
+from ..image import PhotoAlbum
 from ..qq import C2CMessage, QQBotClient
 from ..search import make_reader_session
 from .assembly import Modules, assemble
 from .bridge import PLATFORM, InboundBuilder, OutboundDispatcher
 from .config import QQSuiteConfig, parse_nicknames
+from .photos import PhotoStudio
 from .tools import ToolBox
 
 GATEWAY = "qqsuite_c2c"
@@ -30,6 +33,7 @@ def tools_to_expose(modules: Modules) -> dict[str, bool]:
         "qqsuite_read_url": modules.reader is not None,
         # 语音要经 QQ 网关发出，QQ 没连也不暴露
         "qqsuite_send_voice": modules.tts is not None and modules.qq is not None,
+        "qqsuite_send_photo": modules.image is not None and modules.qq is not None,
     }
 
 
@@ -44,6 +48,8 @@ class QQSuitePlugin(MaiBotPlugin):
         self._builder: InboundBuilder | None = None
         self._dispatcher: OutboundDispatcher | None = None
         self._tools = ToolBox()
+        self._album: PhotoAlbum | None = None
+        self._photos: PhotoStudio | None = None
         self._allowed: set[str] = set()
         self._applied: dict[str, Any] | None = None  # 上次生效的配置，用来跳过没有实际变化的重载
         self._lock = asyncio.Lock()
@@ -89,6 +95,18 @@ class QQSuitePlugin(MaiBotPlugin):
                 logger=log,
             )
             self._allowed = {x.strip() for x in cfg.qq.allowed_openids if x.strip()}
+            self._album = PhotoAlbum(Path(self.ctx.paths.data_dir) / "photos")
+            if modules.image is not None:
+                self._photos = PhotoStudio(
+                    painter=modules.image,
+                    album=self._album,
+                    send_image=self._send_image,
+                    appearance=cfg.image.appearance,
+                    style=cfg.image.style,
+                    follow_seconds=cfg.image.follow_minutes * 60,
+                    daily_limit=cfg.image.daily_limit,
+                    logger=log,
+                )
             if modules.qq is not None:
                 nicknames = parse_nicknames(cfg.qq.nicknames)
                 self._qq = QQBotClient(
@@ -110,6 +128,7 @@ class QQSuitePlugin(MaiBotPlugin):
                     ("语音合成", modules.tts),
                     ("搜索", modules.search),
                     ("读网页", modules.reader),
+                    ("拍照", modules.image),
                 )
                 if on is not None
             ]
@@ -139,6 +158,7 @@ class QQSuitePlugin(MaiBotPlugin):
                 with contextlib.suppress(Exception):
                     await self.ctx.gateway.update_state(GATEWAY, ready=False)
             self._qq = self._builder = self._dispatcher = None
+            self._photos = None
             for session in (self._session, self._reader_session):
                 if session is not None:
                     await session.close()
@@ -208,6 +228,10 @@ class QQSuitePlugin(MaiBotPlugin):
         )
         return bool(result)
 
+    async def _send_image(self, image_b64: str, stream_id: str) -> bool:
+        result = await self.ctx.send.image(image_b64, stream_id, sync_to_maisaka_history=True, rpc_timeout_ms=120000)
+        return bool(result)
+
     # ---------------- 给 planner 的工具 ----------------
     @Tool(
         "qqsuite_web_search",
@@ -256,6 +280,85 @@ class QQSuitePlugin(MaiBotPlugin):
         self, text: str = "", style: str = "", stream_id: str = "", **kwargs: Any
     ) -> dict[str, Any]:
         return await self._tools.speak(text, stream_id, style or "")
+
+    @Tool(
+        "qqsuite_send_photo",
+        description=(
+            "拍一张照片发给对方。对方想看你在干什么、想要你的照片时使用；"
+            "聊到你正在做的事、想分享眼前的画面时也可以主动发，但别太频繁。发完可以再配一句话。"
+        ),
+        parameters=[
+            ToolParameterInfo(
+                name="scene",
+                description="画面描述：在哪、在做什么、穿什么、表情和动作、怎么拍的（自拍 / 别人帮拍 / 只拍景物）",
+            ),
+            ToolParameterInfo(
+                name="selfie",
+                param_type=ToolParamType.BOOLEAN,
+                description="照片里有没有你自己；只拍景物、食物等就填 false",
+                required=False,
+            ),
+            ToolParameterInfo(
+                name="follow_previous",
+                param_type=ToolParamType.BOOLEAN,
+                description="是否接着上一张拍（同一身衣服、同一个场景），对方说「再来一张」「换个姿势」时填 true",
+                required=False,
+            ),
+        ],
+        visibility="visible",
+        timeout_ms=360000,
+    )
+    async def qqsuite_send_photo(
+        self, scene: str = "", selfie: Any = True, follow_previous: Any = False, stream_id: str = "", **kwargs: Any
+    ) -> dict[str, Any]:
+        if self._photos is None:
+            return {"success": False, "content": "", "error": "拍照没有启用"}
+        return await self._photos.take(
+            scene, stream_id, selfie=_as_bool(selfie, True), follow_previous=_as_bool(follow_previous, False)
+        )
+
+    # ---------------- 聊天命令 ----------------
+    @Command(
+        "qqsuite_portrait",
+        description="定妆照：/定妆照 把上一张照片设为定妆照；/定妆照 看 查看；/定妆照 清除 取消",
+        pattern=r"^/定妆照(?:\s+(?P<action>\S+))?\s*$",
+    )
+    async def qqsuite_portrait(
+        self, stream_id: str = "", user_id: str = "", matched_groups: dict | None = None, **kwargs: Any
+    ):
+        if not self._is_allowed(user_id) or self._album is None:
+            return True, None, True
+        action = str((matched_groups or {}).get("action") or "").strip()
+        if action in {"看", "查看"}:
+            portrait = self._album.reference()
+            if portrait is None:
+                reply = "还没有定妆照。先让她拍一张满意的照片，再发 /定妆照"
+            else:
+                await self._send_image(base64.b64encode(portrait.data).decode("ascii"), stream_id)
+                reply = "这是现在的定妆照"
+        elif action in {"清除", "取消", "删除"}:
+            reply = "已取消定妆照" if self._album.clear_reference() else "本来就没有定妆照"
+        elif action:
+            reply = "用法：/定妆照（把上一张设为定妆照）、/定妆照 看、/定妆照 清除"
+        elif self._album.set_reference_from_latest():
+            reply = "已把上一张照片设为定妆照，之后拍她自己都会照这个长相"
+        else:
+            reply = "还没有拍过照片，先让她拍一张"
+        await self.ctx.send.text(reply, stream_id)
+        return True, None, True
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    """模型有时把布尔参数传成字符串。"""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"true", "1", "yes", "是"}:
+            return True
+        if text in {"false", "0", "no", "否"}:
+            return False
+    return default
 
 
 def create_plugin() -> QQSuitePlugin:

@@ -282,8 +282,9 @@ def test_plugin_loads_like_host():
         names = {c["name"]: c for c in plugin.get_components()}
     finally:
         sys.modules.pop(spec.name, None)
-    assert set(names) == {"qqsuite_c2c", "qqsuite_web_search", "qqsuite_read_url", "qqsuite_send_voice"}
-    for tool in ("qqsuite_web_search", "qqsuite_read_url", "qqsuite_send_voice"):
+    tools = ("qqsuite_web_search", "qqsuite_read_url", "qqsuite_send_voice", "qqsuite_send_photo")
+    assert set(names) == {"qqsuite_c2c", "qqsuite_portrait", *tools}
+    for tool in tools:
         assert names[tool]["metadata"]["visibility"] == "visible"
     assert plugin.get_default_config()["plugin"]["config_version"]
 
@@ -355,14 +356,16 @@ def test_tools_to_expose():
         "qqsuite_web_search": False,
         "qqsuite_read_url": False,
         "qqsuite_send_voice": False,
+        "qqsuite_send_photo": False,
     }
-    full = Modules(qq=object(), tts=object(), search=object(), reader=object())
+    full = Modules(qq=object(), tts=object(), search=object(), reader=object(), image=object())
     assert all(tools_to_expose(full).values())
     no_qq = Modules(tts=object(), search=object())
     assert tools_to_expose(no_qq) == {
         "qqsuite_web_search": True,
         "qqsuite_read_url": False,
         "qqsuite_send_voice": False,
+        "qqsuite_send_photo": False,
     }
 
 
@@ -452,7 +455,13 @@ async def test_voice_reply_is_written_to_history():
 def test_manifest_host_range_and_capabilities():
     manifest = json.loads((ROOT / "_manifest.json").read_text())
     assert manifest["host_application"]["max_version"] == "1.3.99"
-    assert sorted(manifest["capabilities"]) == ["component.disable", "component.enable", "send.custom"]
+    assert sorted(manifest["capabilities"]) == [
+        "component.disable",
+        "component.enable",
+        "send.custom",
+        "send.image",
+        "send.text",
+    ]
 
 
 async def test_voice_falls_back_to_wav_when_mp3_fails():
@@ -497,3 +506,68 @@ def test_audio_format_config_and_fallback_module(tmp_path):
     assert wav_cfg.tts.audio_format == "WAV"
     m = assemble(wav_cfg, session=None, reader_session=None, voices_dirs=[tmp_path], logger=logging.getLogger("t"))
     assert m.tts.audio_format == "wav" and m.tts_fallback is None
+
+
+def test_image_settings_from_config(monkeypatch):
+    from qq_suite.host.assembly import image_settings
+
+    assert image_settings(QQSuiteConfig()).provider == "none"
+    monkeypatch.setenv("IMG_KEY", "ik")
+    cfg = QQSuiteConfig.model_validate(
+        {
+            "image": {"enabled": True, "model": "gpt-image-2.5-sunburst", "size": "1536x1024", "quality": "high"},
+            "image_api": {"base_url": " https://relay.example/v1 ", "api_key": "env:IMG_KEY"},
+        }
+    )
+    assert (cfg.image.size, cfg.image.quality) == ("横图 1536×1024", "高（慢、贵）")  # 英文写法读入后换成中文选项
+    i = image_settings(cfg)
+    assert (i.provider, i.base_url, i.api_key, i.model, i.size, i.quality) == (
+        "openai",
+        "https://relay.example/v1",
+        "ik",
+        "gpt-image-2.5-sunburst",
+        "1536x1024",
+        "high",
+    )
+
+
+async def test_portrait_command(tmp_path):
+    from maibot_sdk.context import PluginContext
+
+    from qq_suite.host.plugin import QQSuitePlugin
+    from qq_suite.image import PhotoAlbum, Picture
+
+    plugin = QQSuitePlugin()
+    plugin._set_context(PluginContext("yreidev.qq_suite"))
+    plugin._album = PhotoAlbum(tmp_path)
+    plugin._allowed = {"U1"}
+    texts, images = [], []
+
+    async def text(message, stream_id, **kwargs):
+        texts.append(message)
+        return True
+
+    async def image(data, stream_id, **kwargs):
+        images.append(base64.b64decode(data))
+        return True
+
+    plugin.ctx.send.text = text
+    plugin.ctx.send.image = image
+
+    async def run(action=None, user="U1"):
+        return await plugin.qqsuite_portrait(stream_id="S1", user_id=user, matched_groups={"action": action})
+
+    assert await run() == (True, None, True)
+    assert "还没有拍过照片" in texts[-1]
+    plugin._album.save(Picture(b"photo", "image/jpeg"))
+    await run()
+    assert "已把上一张照片设为定妆照" in texts[-1] and plugin._album.reference() == Picture(b"photo", "image/jpeg")
+    await run("看")
+    assert images == [b"photo"]
+    await run("清除")
+    assert texts[-1] == "已取消定妆照" and plugin._album.reference() is None
+    await run("乱写")
+    assert texts[-1].startswith("用法")
+    count = len(texts)
+    await run(user="stranger")  # 白名单外：不理
+    assert len(texts) == count

@@ -23,6 +23,8 @@ MIMO_TOKEN_PLAN_URL = "https://token-plan-cn.xiaomimimo.com/v1"
 TAVILY_URL = "https://api.tavily.com/search"
 BOCHA_URL = "https://api.bochaai.com/v1/web-search"
 DEFAULT_DESIGN_PROMPT = "年轻女性，声音清晰自然，语速适中，语气亲切"
+DEFAULT_APPEARANCE = "二十多岁的年轻女性，长相清秀，黑色长发"
+DEFAULT_PHOTO_STYLE = "真实的手机照片，自然光线，写实质感"
 
 # 下拉选项（中文）→ 内部代号
 ASR_PROVIDERS = {"硅基流动": "siliconflow", "小米 MiMo": "mimo", "通用 OpenAI 兼容接口": "openai"}
@@ -34,6 +36,8 @@ SEARCH_PROVIDERS = {"SearXNG（自建）": "searxng", "Tavily": "tavily", "博�
 _OFF_VALUES = {"关闭", "none", "", "qq 自带转写", "qq"}
 MIMO_ASR_LANGUAGES = {"自动": "auto", "中文": "zh", "英文": "en"}
 SEARXNG_LANGUAGES = {"自动": "auto", "简体中文": "zh-CN", "英文": "en"}
+IMAGE_SIZES = {"竖图 1024×1536": "1024x1536", "方图 1024×1024": "1024x1024", "横图 1536×1024": "1536x1024"}
+IMAGE_QUALITIES = {"低（快、便宜）": "low", "中": "medium", "高（慢、贵）": "high"}
 
 ASRProviderName = Literal["硅基流动", "小米 MiMo", "通用 OpenAI 兼容接口"]
 TTSProviderName = Literal["小米 MiMo"]
@@ -50,6 +54,9 @@ MiMoLanguage = Literal["自动", "中文", "英文"]
 SearXNGLanguage = Literal["自动", "简体中文", "英文"]
 MiMoBaseURL = Literal["https://api.xiaomimimo.com/v1", "https://token-plan-cn.xiaomimimo.com/v1"]
 MessageFormat = Literal["普通文字", "Markdown"]
+ImageModel = Literal["gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"]
+ImageSize = Literal["竖图 1024×1536", "方图 1024×1024", "横图 1536×1024"]
+ImageQuality = Literal["低（快、便宜）", "中", "高（慢、贵）"]
 AudioFormatName = Literal["MP3", "WAV"]
 
 
@@ -120,7 +127,7 @@ class PluginSection(PluginConfigBase):
     __ui_label__ = "插件"
     __ui_order__ = 0
     enabled: bool = _field(True, label="启用插件")
-    config_version: str = _field("2.3.0", label="配置版本", hint="由插件自动维护，请勿修改", disabled=True)
+    config_version: str = _field("2.4.0", label="配置版本", hint="由插件自动维护，请勿修改", disabled=True)
 
 
 class QQSection(PluginConfigBase):
@@ -234,6 +241,35 @@ class SearchSection(PluginConfigBase):
     _norm_provider = field_validator("provider", mode="before")(_to_label(SEARCH_PROVIDERS))
 
 
+class ImageSection(PluginConfigBase):
+    """拍照：生成照片发给对方（比如想看看她在干什么）。接口地址和 Key 在下方「图像接口」分节。"""
+
+    __ui_label__ = "拍照"
+    __ui_order__ = 45
+    enabled: bool = _field(False, label="启用", hint="关闭时不提供拍照工具，模型完全看不到它")
+    model: ImageModel = _field("gpt-image-2", label="画图模型", hint="2.5 系列更能贴合参考图，人物长相更稳定")
+    size: ImageSize = _field("竖图 1024×1536", label="尺寸")
+    quality: ImageQuality = _field("中", label="质量", hint="越高越清晰，也越慢、越贵")
+    appearance: str = _field(
+        DEFAULT_APPEARANCE,
+        label="人物外貌",
+        hint="画「自己」时用：长相、发型、身材、穿衣风格。设了定妆照（在聊天里发 /定妆照）之后，长相主要按定妆照保持",
+        **{"x-widget": "textarea", "rows": 3},
+    )
+    style: str = _field(DEFAULT_PHOTO_STYLE, label="画风", hint="例如：真实的手机照片 / 日系胶片 / 二次元插画")
+    follow_minutes: int = _field(
+        180,
+        label="连贯时长（分钟）",
+        hint="接着上一张拍时，只参考这么多分钟以内的上一张，让服装、场景前后连贯；0 表示从不参考上一张",
+        ge=0,
+        le=10080,
+    )
+    daily_limit: int = _field(20, label="每天最多张数", hint="控制花费；0 表示不限", ge=0, le=500)
+
+    _norm_size = field_validator("size", mode="before")(_to_label(IMAGE_SIZES))
+    _norm_quality = field_validator("quality", mode="before")(_to_label(IMAGE_QUALITIES))
+
+
 # ---------------- 服务商账号 ----------------
 class MiMoSection(PluginConfigBase):
     """小米 MiMo 开放平台（https://platform.xiaomimimo.com），语音识别和语音合成共用这个 Key。"""
@@ -305,18 +341,31 @@ class BochaSection(PluginConfigBase):
     api_key: str = _field("", label="API Key", password=True)
 
 
+class OpenAIImageSection(PluginConfigBase):
+    """OpenAI 兼容的图像接口，第三方中转或官方都行，需支持 /images/generations 和 /images/edits。"""
+
+    __ui_label__ = "图像接口（OpenAI 兼容）"
+    __ui_order__ = 105
+    base_url: str = _field(
+        "", label="接口地址", hint="例如 https://api.example.com/v1", placeholder="https://api.example.com/v1"
+    )
+    api_key: str = _field("", label="API Key", password=True)
+
+
 class QQSuiteConfig(PluginConfigBase):
     plugin: PluginSection = Field(default_factory=PluginSection)
     qq: QQSection = Field(default_factory=QQSection)
     asr: ASRSection = Field(default_factory=ASRSection)
     tts: TTSSection = Field(default_factory=TTSSection)
     search: SearchSection = Field(default_factory=SearchSection)
+    image: ImageSection = Field(default_factory=ImageSection)
     mimo: MiMoSection = Field(default_factory=MiMoSection)
     siliconflow: SiliconFlowSection = Field(default_factory=SiliconFlowSection)
     openai_asr: OpenAIASRSection = Field(default_factory=OpenAIASRSection)
     searxng: SearXNGSection = Field(default_factory=SearXNGSection)
     tavily: TavilySection = Field(default_factory=TavilySection)
     bocha: BochaSection = Field(default_factory=BochaSection)
+    image_api: OpenAIImageSection = Field(default_factory=OpenAIImageSection)
 
 
 def parse_nicknames(lines: list[str]) -> dict[str, str]:
