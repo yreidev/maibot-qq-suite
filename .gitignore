@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+# MaiBot 生成的插件配置，含密钥，绝不提交
+config.toml
+config.toml.bak*
+voices/

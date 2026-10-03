@@ -1,0 +1,10 @@
+# git archive（Release 附件）只保留插件运行需要的文件
+tests/ export-ignore
+scripts/ export-ignore
+docs/ export-ignore
+.github/ export-ignore
+.gitattributes export-ignore
+.gitignore export-ignore
+.python-version export-ignore
+pyproject.toml export-ignore
+uv.lock export-ignore

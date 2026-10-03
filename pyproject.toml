@@ -1,0 +1,34 @@
+[project]
+name = "maibot-qq-suite"
+version = "0.1.0"
+description = "QQ 官方机器人全家桶：MaiBot 插件，集 QQ 官方机器人（私聊）适配器、语音识别、语音合成、联网搜索于一身"
+readme = "README.md"
+license = "AGPL-3.0-only"
+requires-python = ">=3.11"
+# 运行时只用 MaiBot 环境里已有的包，插件不额外安装依赖
+dependencies = ["aiohttp>=3.9"]
+
+[dependency-groups]
+dev = [
+    "maibot-plugin-sdk==2.8.2",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "pytest-aiohttp>=1.0",
+    "ruff>=0.15",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]  # 中文标点
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.uv]
+package = false

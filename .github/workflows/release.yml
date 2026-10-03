@@ -1,0 +1,41 @@
+name: Release
+
+# 推送 v* 标签时：跑一遍检查，确认版本号与更新日志齐全，然后创建 GitHub Release，
+# 说明取自 CHANGELOG.md 对应版本一节，附件是可直接放进 MaiBot/plugins 的压缩包。
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.13"
+      - run: uv sync --locked
+      - name: 检查
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+          uv run pytest -q
+      - name: 版本号与更新日志
+        id: meta
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test "$(python3 -c "import json;print(json.load(open('_manifest.json'))['version'])")" = "$version"
+          test "$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" = "$version"
+          python3 scripts/changelog_section.py "$version" > release-notes.md
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: 打包
+        run: git archive --format=zip --prefix=maibot-qq-suite/ -o "maibot-qq-suite-${{ steps.meta.outputs.version }}.zip" HEAD
+      - name: 创建 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "maibot-qq-suite-${{ steps.meta.outputs.version }}.zip" \
+            --title "v${{ steps.meta.outputs.version }}" --notes-file release-notes.md
