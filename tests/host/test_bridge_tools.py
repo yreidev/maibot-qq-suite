@@ -287,6 +287,8 @@ def test_plugin_loads_like_host():
     assert set(names) == {"qqsuite_c2c", *tools}
     for tool in tools:
         assert names[tool]["metadata"]["visibility"] == "visible"
+    photo = str(names["qqsuite_send_photo"])
+    assert "重拍" in photo and "不要接着上一张拍" in photo  # 重拍时别带上一张当参考，否则还是同一张脸
     assert plugin.get_default_config()["plugin"]["config_version"]
 
 

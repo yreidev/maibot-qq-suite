@@ -306,6 +306,7 @@ class QQSuitePlugin(MaiBotPlugin):
         description=(
             "拍一张照片发给对方。对方想看你在干什么、想要你的照片时使用；"
             "聊到你正在做的事、想分享眼前的画面时也可以主动发，但别太频繁。发完可以再配一句话。"
+            "对方不满意要重拍时，拍一张新的，不要接着上一张拍。"
         ),
         parameters=[
             ToolParameterInfo(
@@ -321,7 +322,10 @@ class QQSuitePlugin(MaiBotPlugin):
             ToolParameterInfo(
                 name="follow_previous",
                 param_type=ToolParamType.BOOLEAN,
-                description="是否接着上一张拍（同一身衣服、同一个场景），对方说「再来一张」「换个姿势」时填 true",
+                description=(
+                    "是否接着上一张拍（同一身衣服、同一个场景）。对方说「换个姿势」「再来一张同样的」时填 true；"
+                    "对方嫌不好看要重拍、想换衣服或换场景时填 false"
+                ),
                 required=False,
             ),
         ],
